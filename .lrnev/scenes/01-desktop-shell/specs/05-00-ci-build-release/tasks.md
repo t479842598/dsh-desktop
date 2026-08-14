@@ -39,8 +39,8 @@ git init、确认 .gitignore 覆盖 node_modules/dist/target/gen/.dsh-desktop、
 - 仓库在 GitHub 可见
 - 工作区干净
 
-### T-003 从 GitHub Actions 触发构建并验证产物 <!-- lrnev-task: status=in_progress, created=2026-08-14T01:14:28.620Z, updated=2026-08-14T01:15:48.375Z, validates=F-02 -->
-<!-- lrnev-task-history: [{"from":"pending","to":"in_progress","at":"2026-08-14T01:15:48.375Z"}] -->
+### T-003 从 GitHub Actions 触发构建并验证产物 <!-- lrnev-task: status=completed, created=2026-08-14T01:14:28.620Z, updated=2026-08-14T02:32:14.278Z, validates=F-02 -->
+<!-- lrnev-task-history: [{"from":"pending","to":"in_progress","at":"2026-08-14T01:15:48.375Z"},{"from":"in_progress","to":"completed","at":"2026-08-14T02:32:14.278Z"}] -->
 
 gh workflow run 触发，等待双平台 job 完成；gh run download 取安装包并核对类型（.dmg/.app、.msi/.exe）
 

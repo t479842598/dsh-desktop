@@ -1,9 +1,10 @@
 ---
-spec: '05-00-ci-build-release'
-scene: '01-desktop-shell'
-status: draft
+spec: 05-00-ci-build-release
+scene: 01-desktop-shell
+status: completed
 priority: P1
 created: '2026-08-14'
+updated: '2026-08-14'
 ---
 
 # 05-00 Ci Build Release - 需求
