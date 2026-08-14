@@ -7,11 +7,12 @@ scene: '01-desktop-shell'
 
 ## 决策
 
-### D-01 workflow 结构：单 workflow 双 job（构建矩阵 + 发布）
+### D-01 workflow 结构：双平台矩阵构建 + tag 直接发 Release
 
-- 构建 job 用 matrix（macos-14 arm64 原生构建 aarch64-apple-darwin；windows-latest 构建 x86_64-pc-windows-msvc），`fail-fast: false`，各自 upload-artifact
-- 发布 job 仅在 `push tags: v*` 时运行，download 两个 artifact 后交给 `softprops/action-gh-release@v2` 挂 assets
-- 理由：显式 tauri build 步骤比 tauri-action 更透明可控；artifact→release 两步走，手动触发时也能只出 artifact
+- 构建 job 用 matrix（macos-14 arm64 原生构建 aarch64-apple-darwin；windows-latest 构建 x86_64-pc-windows-msvc），`fail-fast: false`
+- **tag 发布不走 artifact 中转**：每个平台 job 构建完成后直接 `softprops/action-gh-release@v2` 把自己的安装包挂到 GitHub Release（Release assets 不计入 Actions artifact 配额）
+- `workflow_dispatch` 手动触发时才走 `upload-artifact`（此时无 tag、无 Release）
+- 理由：免费账号 Actions artifact 存储配额仅 500MB，账号下其他仓库的旧构建产物会把它占满（见 errorbook 65abb3d91c65）；Release assets 无此配额问题
 
 ### D-02 产物路径必须带 target triple
 
