@@ -70,7 +70,8 @@ pnpm tauri build        # 当前平台安装包
 
 - **打 tag**（`v*`）→ 自动构建并创建 GitHub Release，两个安装包挂为 assets
 - **手动触发** → Actions 页面 `Run workflow`，产物在 run 的 Artifacts 里下载
-- 未签名未公证：macOS 首次打开需右键→打开；Windows 有 SmartScreen 提示
+- 未签名未公证：macOS 从浏览器下载后首次打开会提示“已损坏，无法打开”（Gatekeeper 隔离标记），
+  执行 `xattr -dr com.apple.quarantine /Applications/dsh-desktop.app` 即可；Windows 有 SmartScreen 提示（点“仍要运行”）
 
 ```sh
 gh run download <run-id> --dir dist-download   # 拉取全部产物
