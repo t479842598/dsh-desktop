@@ -83,3 +83,4 @@ jobs:
             artifacts/**/*.dmg
             artifacts/**/*.msi
             artifacts/**/*.exe
+
