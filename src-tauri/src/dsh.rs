@@ -69,8 +69,9 @@ impl DshProcess {
             .args(["-c", &shell_cmd])
             .stdout(Stdio::from(f.try_clone().map_err(|e| e.to_string())?))
             .stderr(Stdio::from(f));
-        // 关键：把 shell 也放到独立进程组并脱离 GUI 会话（setsid 语义），
+        // 关键：把 shell 也放到独立进程组并脱离 GUI 会话（setsid 语义，仅 Unix），
         // 避免继承 app 的 Mach/GUI 会话上下文导致 node 启动 getcwd 挂起
+        #[cfg(unix)]
         command.process_group(0);
         // GUI 应用从 Finder 启动时 PATH 精简，补全常见 Node 工具链路径
         let mut path = std::env::var("PATH").unwrap_or_default();
