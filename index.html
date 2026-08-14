@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>dsh</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="logo">dsh</span>
+          <span class="title">desktop</span>
+        </div>
+        <div class="tabs">
+          <button id="tab-status" class="tab active">状态</button>
+        </div>
+      </header>
+
+      <!-- 状态页 -->
+      <main id="panel-status" class="panel">
+        <section class="card">
+          <h2>服务状态</h2>
+          <div id="dsh-status" class="status-line">检测中…</div>
+          <div class="actions">
+            <button id="btn-open-dsh" class="btn primary">打开 dsh Web UI</button>
+            <button id="btn-restart-dsh" class="btn">重启 dsh</button>
+            <button id="btn-poll" class="btn">立即检查更新</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>自动更新管线</h2>
+          <div id="watcher-status" class="status-line">—</div>
+          <div id="watcher-results" class="results"></div>
+        </section>
+
+        <section class="card">
+          <h2>仓库配置</h2>
+          <pre id="repos-list" class="mono"></pre>
+        </section>
+      </main>
+
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

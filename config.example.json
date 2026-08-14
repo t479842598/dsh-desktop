@@ -1,0 +1,46 @@
+{
+  "dsh": {
+    "command": [
+      "/Users/qingtang/.fnm/node-versions/v24.18.0/installation/bin/node",
+      "--import",
+      "tsx/esm",
+      "apps/cli/src/bin.ts",
+      "web"
+    ],
+    "cwd": "/Volumes/1T 原装/项目研发/deepseek-harness",
+    "port": 3080,
+    "ready_timeout_sec": 60,
+    "headless_command": [
+      "/Users/qingtang/.fnm/node-versions/v24.18.0/installation/bin/node",
+      "--import",
+      "tsx/esm",
+      "apps/cli/src/bin.ts"
+    ]
+  },
+  "poll_interval_sec": 300,
+  "notify": {
+    "enabled": true
+  },
+  "repos": [
+    {
+      "name": "deepseek-harness",
+      "local_path": "/Volumes/1T 原装/项目研发/deepseek-harness",
+      "remote": "origin",
+      "branch": "master",
+      "auto_pull": "ff-only",
+      "rebuild": {
+        "mode": "off",
+        "command": "pnpm install && pnpm run build",
+        "prompt": "",
+        "retry_on_failure": true
+      }
+    }
+  ],
+  "remote": {
+    "enabled": false,
+    "port": 3081,
+    "username": "",
+    "password": "",
+    "allowed_hosts": []
+  }
+}

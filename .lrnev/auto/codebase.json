@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-13T16:28:35.666Z",
+  "analyzer": "AutoAnalyzer",
+  "project_root": "/Volumes/1T 原装/项目研发/dsh-desktop",
+  "tech_stack": [],
+  "primary_language": "unknown",
+  "package_managers": [],
+  "dependencies": {},
+  "directories": [],
+  "root_files": [],
+  "sample_files": [],
+  "notes": [
+    "该分析不调用 LLM / embedding，只做确定性文件探测。",
+    "请 AI 抽样阅读 sample_files 后补充 coding_style / architecture_notes 字段。"
+  ]
+}
