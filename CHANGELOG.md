@@ -5,7 +5,7 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [0.1.0] - 2026-08-15
+## [0.2.0] - 2026-08-15
 
 ### 新增
 
@@ -44,3 +44,9 @@
 - 远程模式的 Basic Auth 经 URL userinfo 传递：macOS WKWebView 支持；
   Windows WebView2 可能弹出系统认证框（平台行为差异，待适配）。
 - Windows 版本已通过源码层跨平台改造，完整构建与实机验证走 CI 双平台流水线。
+
+## [0.1.0] - 2026-08-14
+
+### 新增
+
+- 初始版本：Tauri 2 桌面壳，自动拉起本地 dsh Web 服务，托盘常驻 + 自动更新管线。
