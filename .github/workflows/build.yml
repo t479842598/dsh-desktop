@@ -23,9 +23,11 @@ jobs:
           - platform: macos-14 # Apple Silicon runner，原生构建 arm64
             target: aarch64-apple-darwin
             name: macos-arm64
+            bundles: app
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             name: windows-x86_64
+            bundles: nsis,msi
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -54,14 +56,29 @@ jobs:
 
       - name: Build (tauri)
         # bundle 产物落在 target/<triple>/release/bundle/（带 target 目录，勿写成 release/bundle）
-        run: pnpm tauri build --target ${{ matrix.target }}
+        # macOS 只打包 .app（CI runner 上 create-dmg 不稳定），发布时 zip 打包；Windows 默认 nsis+msi
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
       # tag 发布：直接把安装包挂到 GitHub Release（Release assets 不占用 Actions artifact 配额）
+      - name: Package macOS .app as zip
+        if: runner.os == 'macOS'
+        run: |
+          cd src-tauri/target/${{ matrix.target }}/release/bundle/macos
+          zip -r dsh-desktop-macos-arm64.zip dsh-desktop.app
+
       - name: Publish macOS release asset
         if: startsWith(github.ref, 'refs/tags/v') && runner.os == 'macOS'
         uses: softprops/action-gh-release@v2
         with:
-          files: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          files: src-tauri/target/${{ matrix.target }}/release/bundle/macos/dsh-desktop-macos-arm64.zip
+
+      - name: Upload macOS artifact
+        if: github.event_name == 'workflow_dispatch' && runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-desktop-macos-arm64
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/macos/dsh-desktop-macos-arm64.zip
+          if-no-files-found: error
 
       - name: Publish Windows release assets
         if: startsWith(github.ref, 'refs/tags/v') && runner.os == 'Windows'
