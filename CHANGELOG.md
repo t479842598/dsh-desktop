@@ -5,6 +5,14 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.3.0] - 2026-08-15
+
+### 变更
+
+- **发布产物调整**：macOS 改为打包 `.app` 并压缩为 zip 发布（CI runner 上
+  create-dmg 不稳定）；Windows 保持 NSIS 安装包（exe）+ MSI 双格式，
+  详见 README「下载与安装」。
+
 ## [0.2.0] - 2026-08-15
 
 ### 新增
