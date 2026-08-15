@@ -38,7 +38,7 @@
 
 从 GitHub Releases 下载对应平台的安装包：
 
-- **macOS**：`.dmg`（Apple Silicon）
+- **macOS**：`.zip`（内含 `dsh-desktop.app`，解压后拖入 Applications）
 - **Windows**：`.msi` 或 NSIS `.exe`（x64）
 
 macOS 未公证：首次打开提示“已损坏”时执行
@@ -77,7 +77,7 @@ pnpm tauri dev
 
 | 平台 | 产物 |
 |---|---|
-| macOS arm64 | `.dmg` / `.app` |
+| macOS arm64 | `.zip`（内含 `.app`） |
 | Windows x64 | `.msi` + NSIS `.exe` |
 
 ## 变更记录
