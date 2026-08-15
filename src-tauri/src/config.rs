@@ -109,6 +109,42 @@ impl Default for NotifyConfig {
     }
 }
 
+/// 远程连接配置（连接远程 dsh 实例）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RemoteConnectionConfig {
+    pub url: String,
+    pub username: String,
+    pub password: String,
+}
+
+impl Default for RemoteConnectionConfig {
+    fn default() -> Self {
+        Self {
+            url: "".into(),
+            username: "".into(),
+            password: "".into(),
+        }
+    }
+}
+
+/// 连接模式：local（默认，本机 3080）或 remote（远程 URL）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ConnectionConfig {
+    pub mode: String, // "local" | "remote"
+    pub remote: RemoteConnectionConfig,
+}
+
+impl Default for ConnectionConfig {
+    fn default() -> Self {
+        Self {
+            mode: "local".into(),
+            remote: RemoteConnectionConfig::default(),
+        }
+    }
+}
+
 /// 顶层配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -118,6 +154,7 @@ pub struct AppConfig {
     pub notify: NotifyConfig,
     pub repos: Vec<RepoConfig>,
     pub remote: RemoteConfig,
+    pub connection: ConnectionConfig,
 }
 
 impl Default for AppConfig {
@@ -139,6 +176,7 @@ impl Default for AppConfig {
                 },
             }],
             remote: RemoteConfig::default(),
+            connection: ConnectionConfig::default(),
         }
     }
 }

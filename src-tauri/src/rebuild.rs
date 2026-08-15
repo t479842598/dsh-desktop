@@ -103,12 +103,8 @@ fn run_headless(repo: &RepoConfig, cfg: &RebuildConfig, update_summary: &str, ke
         return run_command(repo, cfg);
     }
 
-    // 调用 dsh --profile headless
-    let output = Command::new("npx")
-        .args(["@deepseek-ai/dsh", "--profile", "headless", &prompt])
-        .current_dir(&repo.local_path)
-        .env("DSH_WORKSPACE", &repo.local_path)
-        .output();
+    // 调用 dsh --profile headless；Windows 下 Rust 不按 PATHEXT 解析 npx.cmd，需经 cmd /C
+    let output = run_headless_npx(&repo.local_path, &prompt);
 
     match output {
         Ok(o) => {
@@ -143,5 +139,30 @@ pub fn tail_tail(s: &str, max: usize) -> String {
         let chars: Vec<char> = s.chars().collect();
         let start = chars.len() - max;
         format!("…{}", chars[start..].iter().collect::<String>())
+    }
+}
+
+/// 调用 `npx @deepseek-ai/dsh --profile headless`：Windows 下 Rust 不按 PATHEXT
+/// 解析 .cmd，需经 `cmd /C`；Unix 直接跑 npx。返回 Command::output 的 Result。
+fn run_headless_npx(workdir: &str, prompt: &str) -> std::io::Result<std::process::Output> {
+    #[cfg(windows)]
+    {
+        let cmd = format!(
+            "npx @deepseek-ai/dsh --profile headless \"{}\"",
+            prompt.replace('\"', "\"\"")
+        );
+        std::process::Command::new("cmd")
+            .args(["/C", &cmd])
+            .current_dir(workdir)
+            .env("DSH_WORKSPACE", workdir)
+            .output()
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("npx")
+            .args(["@deepseek-ai/dsh", "--profile", "headless", prompt])
+            .current_dir(workdir)
+            .env("DSH_WORKSPACE", workdir)
+            .output()
     }
 }

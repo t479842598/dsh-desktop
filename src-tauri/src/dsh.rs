@@ -54,40 +54,58 @@ impl DshProcess {
             return Err("dsh.command 为空".into());
         }
 
-        // 通过 /bin/sh 做 chdir 再 exec：绕开 Rust Command::current_dir 在 GUI 上下文
+        // 通过 shell 做 chdir 再 exec：绕开 Rust Command::current_dir 在 GUI 上下文
         // 偶发的 chdir 失效问题（观察到子进程 cwd 落在 / 导致 node getcwd 卡死）
-        let mut command = Command::new("/bin/sh");
-        let mut shell_cmd = String::from("cd ");
-        shell_cmd.push_str(&shell_quote(&cfg.cwd));
-        shell_cmd.push_str(" && exec");
-        // 只拼一次完整命令（cfg.command 已含全部参数；args 是其子集，勿重复）
-        for part in &cfg.command {
-            shell_cmd.push(' ');
-            shell_cmd.push_str(&shell_quote(part));
+        let mut command;
+        #[cfg(unix)]
+        {
+            // Unix：/bin/sh，单引号转义，独立进程组（setsid 语义，避免继承 GUI 会话）
+            let mut shell_cmd = String::from("cd ");
+            shell_cmd.push_str(&shell_quote(&cfg.cwd));
+            shell_cmd.push_str(" && exec");
+            for part in &cfg.command {
+                shell_cmd.push(' ');
+                shell_cmd.push_str(&shell_quote(part));
+            }
+            command = Command::new("/bin/sh");
+            command
+                .args(["-c", &shell_cmd])
+                .process_group(0);
+        }
+        #[cfg(windows)]
+        {
+            // Windows：cmd /C，双引号转义（PATH 经 PATHEXT 解析 pnpm.cmd 等）
+            let mut shell_cmd = String::from("cd /d \"");
+            shell_cmd.push_str(&win_quote(&cfg.cwd));
+            shell_cmd.push_str("\" && ");
+            let parts = cfg.command.iter().map(|p| win_quote(p)).collect::<Vec<_>>().join(" ");
+            shell_cmd.push_str(&parts);
+            command = Command::new("cmd");
+            command.args(["/C", &shell_cmd]);
         }
         command
-            .args(["-c", &shell_cmd])
             .stdout(Stdio::from(f.try_clone().map_err(|e| e.to_string())?))
             .stderr(Stdio::from(f));
-        // 关键：把 shell 也放到独立进程组并脱离 GUI 会话（setsid 语义，仅 Unix），
-        // 避免继承 app 的 Mach/GUI 会话上下文导致 node 启动 getcwd 挂起
-        #[cfg(unix)]
-        command.process_group(0);
         // GUI 应用从 Finder 启动时 PATH 精简，补全常见 Node 工具链路径
-        let mut path = std::env::var("PATH").unwrap_or_default();
-        for extra in [
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
-            "/usr/local/opt/node/bin",
-            "/Users/qingtang/.fnm/current/bin",
-        ] {
-            if !path.split(':').any(|p| p == extra) {
-                path.push(':');
-                path.push_str(extra);
+        // GUI 应用从 Finder 启动时 PATH 精简，补全常见 Node 工具链路径（macOS）
+        #[cfg(target_os = "macos")]
+        {
+            let mut path = std::env::var("PATH").unwrap_or_default();
+            for extra in [
+                "/opt/homebrew/bin",
+                "/usr/local/bin",
+                "/usr/local/opt/node/bin",
+                "/Users/qingtang/.fnm/current/bin",
+            ] {
+                if !path.split(':').any(|p| p == extra) {
+                    path.push(':');
+                    path.push_str(extra);
+                }
             }
+            command.env("PATH", path);
         }
-        command.env("PATH", path);
-        // 清除 GUI 会话继承变量，避免 node 启动时与 WindowServer/LaunchServices 交互阻塞
+        // 清除 GUI 会话继承变量，避免 node 启动时与 WindowServer/LaunchServices 交互阻塞（macOS）
+        #[cfg(target_os = "macos")]
         for var in [
             "__CFBundleIdentifier",
             "__CF_USER_TEXT_ENCODING",
@@ -96,11 +114,14 @@ impl DshProcess {
         ] {
             command.env_remove(var);
         }
-        // 显式设置 HOME 与 LANG，保证 node/tsx 行为确定
-        if let Ok(home) = std::env::var("HOME") {
-            command.env("HOME", home);
+        // 显式设置 HOME 与 LANG，保证 node/tsx 行为确定（Unix；Windows 用 USERPROFILE）
+        #[cfg(unix)]
+        {
+            if let Ok(home) = std::env::var("HOME") {
+                command.env("HOME", home);
+            }
+            command.env("LANG", "en_US.UTF-8");
         }
-        command.env("LANG", "en_US.UTF-8");
         let child = command
             .spawn()
             .map_err(|e| format!("启动 dsh 失败: {e}"))?;
@@ -160,29 +181,74 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\\\''"))
 }
 
+/// Windows 双引号转义参数（用于 cmd /C 拼接）：内部双引号翻倍，避免提前闭合
+#[cfg(windows)]
+fn win_quote(s: &str) -> String {
+    format!("\"{}\"", s.replace('\"', "\"\""))
+}
+
 /// 杀掉占用指定端口的进程（仅限 node/tsx 类，即 dsh 运行进程；避免误杀用户其它程序）
 fn kill_port_owner(port: u16) {
-    let out = std::process::Command::new("lsof")
-        .args(["-ti", &format!(":{port}")])
-        .output();
-    let Ok(out) = out else { return };
-    if !out.status.success() {
-        return;
+    #[cfg(unix)]
+    {
+        let out = std::process::Command::new("lsof")
+            .args(["-ti", &format!(":{port}")])
+            .output();
+        let Ok(out) = out else { return };
+        if !out.status.success() {
+            return;
+        }
+        let pids = String::from_utf8_lossy(&out.stdout);
+        for pid in pids.lines() {
+            let Ok(p) = pid.trim().parse::<i32>() else { continue };
+            // 只杀 node/tsx 进程（dsh 是 node 服务）；pnpm/npx 包装进程也会被 lsof 列出，一并处理
+            let comm = std::process::Command::new("ps")
+                .args(["-p", &p.to_string(), "-o", "comm="])
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                .unwrap_or_default();
+            let comm_lower = comm.to_lowercase();
+            if comm_lower.contains("node") || comm_lower.contains("tsx") || comm_lower.contains("pnpm") {
+                log::warn!("[dsh] 清理端口占用进程 pid={} ({})", p, comm.trim());
+                let _ = std::process::Command::new("kill").arg(&p.to_string()).status();
+            }
+        }
     }
-    let pids = String::from_utf8_lossy(&out.stdout);
-    for pid in pids.lines() {
-        let Ok(p) = pid.trim().parse::<i32>() else { continue };
-        // 只杀 node/tsx 进程（dsh 是 node 服务）；pnpm/npx 包装进程也会被 lsof 列出，一并处理
-        let comm = std::process::Command::new("ps")
-            .args(["-p", &p.to_string(), "-o", "comm="])
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-            .unwrap_or_default();
-        let comm_lower = comm.to_lowercase();
-        if comm_lower.contains("node") || comm_lower.contains("tsx") || comm_lower.contains("pnpm") {
-            log::warn!("[dsh] 清理端口占用进程 pid={} ({})", p, comm.trim());
-            let _ = std::process::Command::new("kill").arg(&p.to_string()).status();
+    #[cfg(windows)]
+    {
+        // Windows：netstat 找占用 PID，taskkill 强杀（按进程名过滤 node/tsx/pnpm）
+        let out = std::process::Command::new("netstat")
+            .args(["-ano"])
+            .output();
+        let Ok(out) = out else { return };
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut pids = std::collections::HashSet::new();
+        let needle = format!(":{port} ");
+        for line in text.lines() {
+            if line.contains(&needle) && (line.contains("LISTENING") || line.contains("LISTEN")) {
+                if let Some(pid) = line.split_whitespace().last() {
+                    if let Ok(p) = pid.parse::<i32>() {
+                        pids.insert(p);
+                    }
+                }
+            }
+        }
+        for p in pids {
+            // 只杀 node/tsx 进程
+            let comm = std::process::Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {p}"), "/FO", "CSV", "/NH"])
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                .unwrap_or_default();
+            let comm_lower = comm.to_lowercase();
+            if comm_lower.contains("node") || comm_lower.contains("tsx") || comm_lower.contains("pnpm") {
+                log::warn!("[dsh] 清理端口占用进程 pid={}", p);
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", &p.to_string(), "/F"])
+                    .status();
+            }
         }
     }
 }

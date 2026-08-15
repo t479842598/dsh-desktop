@@ -17,12 +17,15 @@ pub fn notify(title: &str, body: &str) {
     }
     #[cfg(target_os = "windows")]
     {
+        // 简单可靠的 Windows 通知：msg.exe + 注册表（不依赖 BurntToast 模块）
         let _ = Command::new("powershell")
             .args([
                 "-NoProfile",
+                "-WindowStyle",
+                "Hidden",
                 "-Command",
                 &format!(
-                    "New-BurntToastNotification -Text '{safe_title}', '{safe_body}'"
+                    "New-Object -ComObject Wscript.Shell; $s=New-Object -ComObject Wscript.Shell; $s.Popup(\"{safe_body}\", 5, \"{safe_title}\", 64) | Out-Null"
                 ),
             ])
             .output();

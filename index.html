@@ -7,14 +7,24 @@
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
+    <!-- 启动画面：host ready 后淡出（desktop-polish F-03） -->
+    <div id="splash" class="splash">
+      <div class="splash-wordmark">
+        <span class="splash-logo">dsh</span>
+        <span class="splash-title">desktop</span>
+        <div class="splash-band"></div>
+      </div>
+      <div class="splash-hint">正在启动服务…</div>
+    </div>
     <div id="app">
-      <header class="topbar">
+      <header class="topbar" data-tauri-drag-region>
         <div class="brand">
           <span class="logo">dsh</span>
           <span class="title">desktop</span>
         </div>
         <div class="tabs">
           <button id="tab-status" class="tab active">状态</button>
+          <button id="tab-settings" class="tab">设置</button>
         </div>
       </header>
 
@@ -42,7 +52,66 @@
         </section>
       </main>
 
+      <!-- 设置页 -->
+      <main id="panel-settings" class="panel hidden">
+        <section class="card">
+          <h2>连接模式</h2>
+          <p class="hint">
+            本地模式：启动本机 dsh 服务（127.0.0.1:3080）并加载其 Web UI；
+            远程模式：连接你配置的远程 dsh 实例（如经网关/隧道暴露的地址），不在本机启动 dsh。
+          </p>
+          <div class="field">
+            <label class="radio-row">
+              <input type="radio" name="conn-mode" value="local" checked />
+              <span>本地模式（默认）</span>
+            </label>
+            <label class="radio-row">
+              <input type="radio" name="conn-mode" value="remote" />
+              <span>远程模式</span>
+            </label>
+          </div>
+          <div id="remote-fields" class="remote-fields hidden">
+            <div class="field">
+              <span>远程 URL（如 https://ds.example.com）</span>
+              <input type="text" id="remote-url" placeholder="https://…" autocomplete="off" />
+            </div>
+            <div class="field">
+              <span>账号（Basic Auth 用户名）</span>
+              <input type="text" id="remote-username" placeholder="username" autocomplete="off" />
+            </div>
+            <div class="field">
+              <span>密码</span>
+              <input type="password" id="remote-password" placeholder="password" autocomplete="off" />
+            </div>
+          </div>
+          <div class="actions">
+            <button id="btn-save-connection" class="btn primary">保存连接配置</button>
+            <span id="conn-save-result" class="save-result"></span>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>远程访问网关（对外暴露）</h2>
+          <p class="hint">
+            在局域网/外网通过账号密码访问本机 dsh（网关监听 0.0.0.0，Basic Auth + 可信主机校验）。
+            凭据与连接模式无关，保存后自动重启后端生效。
+          </p>
+          <div class="actions">
+            <button id="btn-open-gateway-config" class="btn">编辑网关配置</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>本地 dsh 服务</h2>
+          <p class="hint">dsh 启动命令与工作目录来自配置文件。</p>
+          <div class="actions">
+            <button id="btn-open-config" class="btn">编辑配置文件</button>
+          </div>
+        </section>
+      </main>
+
     </div>
+    <div id="toast" class="toast"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
