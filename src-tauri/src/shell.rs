@@ -164,20 +164,23 @@ pub const SHELL_SCRIPT: &str = r#"
   var modeTag = document.getElementById('dsh-island-mode')
   var remoteFields = document.getElementById('dsh-remote-fields')
 
+  // 读取当前配置填充表单：on_page_load 已注入 window.__dsh_cfg（自定义 command 远程 origin 被 ACL 拒）。
+  // 注入时机是 document start（此时 __dsh_cfg 尚未注入，SHELL_SCRIPT 又会被幂等 guard 挡住重入），
+  // 因此把“应用配置”挂到全局，on_page_load 注入 cfg 后主动调用，保证模式标签/表单与配置同步。
   function setModeUI(mode) {
     modeTag.textContent = mode === 'remote' ? '远程' : '本地'
     var radios = document.querySelectorAll('input[name="dsh-conn-mode"]')
     for (var i = 0; i < radios.length; i++) radios[i].checked = (radios[i].value === mode)
     remoteFields.style.display = mode === 'remote' ? '' : 'none'
   }
-
-  // 读取当前配置填充表单：on_page_load 已注入 window.__dsh_cfg（自定义 command 远程 origin 被 ACL 拒）
+  window.__dsh_apply_cfg = function (cfg) {
+    if (!cfg) return
+    if (cfg.mode) setModeUI(cfg.mode)
+    if (cfg.remoteUrl) document.getElementById('dsh-remote-url').value = cfg.remoteUrl
+    if (cfg.remoteUser) document.getElementById('dsh-remote-user').value = cfg.remoteUser
+  }
   try {
-    if (window.__dsh_cfg) {
-      if (window.__dsh_cfg.mode) setModeUI(window.__dsh_cfg.mode)
-      if (window.__dsh_cfg.remoteUrl) document.getElementById('dsh-remote-url').value = window.__dsh_cfg.remoteUrl
-      if (window.__dsh_cfg.remoteUser) document.getElementById('dsh-remote-user').value = window.__dsh_cfg.remoteUser
-    }
+    if (window.__dsh_cfg) window.__dsh_apply_cfg(window.__dsh_cfg)
   } catch (e) {}
 
   // ---- 灵动岛：平时隐藏，鼠标靠近窗口顶部自动浮现，移开自动收起；长按拖动窗口 ----

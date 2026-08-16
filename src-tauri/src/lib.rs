@@ -595,9 +595,12 @@ pub fn run() {
                 use tauri::webview::PageLoadEvent;
                 if payload.event() == PageLoadEvent::Finished {
                     // 先注入当前连接配置（设置面板填充用），再注入壳层 UI
+                    // （__dsh_apply_cfg 由 SHELL_SCRIPT 定义：document start 注入时
+                    // __dsh_cfg 尚不存在，而幂等 guard 会挡第二次 SHELL_SCRIPT，
+                    // 因此这里注入 cfg 后显式调用一次应用，保证模式标签/表单同步）
                     let (cfg, _) = config::load_config();
                     let js = format!(
-                        "window.__dsh_cfg = {{ mode: {}, remoteUrl: {}, remoteUser: {} }};",
+                        "window.__dsh_cfg = {{ mode: {}, remoteUrl: {}, remoteUser: {} }};\nif (window.__dsh_apply_cfg) window.__dsh_apply_cfg(window.__dsh_cfg);",
                         serde_json::to_string(&cfg.connection.mode).unwrap_or_else(|_| "\"local\"".into()),
                         serde_json::to_string(&cfg.connection.remote.url).unwrap_or_else(|_| "\"\"".into()),
                         serde_json::to_string(&cfg.connection.remote.username).unwrap_or_else(|_| "\"\"".into()),
