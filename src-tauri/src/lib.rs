@@ -26,6 +26,8 @@ pub struct AppState {
     pub ctx_menu_window: std::sync::Mutex<Option<String>>,
     /// 最近弹出右键菜单的目标信息（链接/图片 URL 供动作使用）
     pub ctx_menu_target: std::sync::Mutex<Option<ContextMenuTarget>>,
+    /// 多窗口：下一个新窗口的序号（label = dsh-<seq>）
+    pub window_seq: std::sync::Mutex<u32>,
 }
 
 #[tauri::command]
@@ -205,6 +207,89 @@ fn open_dsh_window(app: &AppHandle) {
         let _ = win.show();
         let _ = win.set_focus();
     }
+}
+
+/// 每次页面加载完成后：先注入当前连接配置（模式标签/设置表单同步用），再注入壳层 UI。
+/// 注意 document start 注入 SHELL_SCRIPT 时 __dsh_cfg 尚不存在（on_page_load 才注入），
+/// 而幂等 guard 会挡第二次 SHELL_SCRIPT，因此这里注入 cfg 后显式调用 __dsh_apply_cfg。
+fn inject_page_load_cfg(win: &tauri::WebviewWindow, payload: &tauri::webview::PageLoadPayload) {
+    use tauri::webview::PageLoadEvent;
+    if payload.event() != PageLoadEvent::Finished {
+        return;
+    }
+    let (cfg, _) = config::load_config();
+    let js = format!(
+        "window.__dsh_cfg = {{ mode: {}, remoteUrl: {}, remoteUser: {} }};\nif (window.__dsh_apply_cfg) window.__dsh_apply_cfg(window.__dsh_cfg);",
+        serde_json::to_string(&cfg.connection.mode).unwrap_or_else(|_| "\"local\"".into()),
+        serde_json::to_string(&cfg.connection.remote.url).unwrap_or_else(|_| "\"\"".into()),
+        serde_json::to_string(&cfg.connection.remote.username).unwrap_or_else(|_| "\"\"".into()),
+    );
+    let _ = win.eval(js);
+    let _ = win.eval(shell::SHELL_SCRIPT);
+}
+
+/// 创建 dsh 窗口：main 窗口加载启动页 index.html（后续由 boot/open_dsh_window 导航）；
+/// 其他窗口（多窗口 dsh-<seq>）直接加载当前模式的 dsh Web UI（本地 3080 / 远程 URL）。
+/// 所有窗口共享：SHELL_SCRIPT 注入 + on_page_load 配置同步 + 无边框效果。
+fn create_dsh_window(app: &AppHandle, label: &str) -> Result<tauri::WebviewWindow, String> {
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
+    let target = if label == "main" {
+        WebviewUrl::App("index.html".into())
+    } else {
+        let (cfg, _) = config::load_config();
+        let url = if cfg.connection.mode == "remote" {
+            remote_url_with_auth(&cfg)
+        } else {
+            format!("http://127.0.0.1:{}", cfg.dsh.port)
+        };
+        let parsed: tauri::Url = url.parse().map_err(|e| format!("URL 无效: {url}: {e}"))?;
+        WebviewUrl::External(parsed)
+    };
+    let mut builder = WebviewWindowBuilder::new(app, label, target)
+        .title("dsh desktop")
+        .inner_size(1280.0, 800.0)
+        .min_inner_size(800.0, 600.0)
+        .resizable(true)
+        .fullscreen(false)
+        .visible(false)
+        .decorations(false);
+    // macOS 专属：Overlay 标题栏 + 红黄绿控制按钮位置（Windows 无这些 API，无边框靠注入岛控制）
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .traffic_light_position(tauri::LogicalPosition::new(14.0, 14.0));
+    }
+    let win = builder
+        .initialization_script(shell::SHELL_SCRIPT)
+        // 兜底：导航（含 dsh 页面）后重新注入壳层 UI——
+        // initialization_script 在 navigate 后可能不重跑，on_page_load 保证每次注入
+        .on_page_load(|win, payload| inject_page_load_cfg(&win, &payload))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // 无边框窗口效果：Win11 Mica / macOS vibrancy（desktop-polish F-02）
+    #[cfg(target_os = "windows")]
+    let _ = window_vibrancy::apply_mica(&win, None);
+    #[cfg(target_os = "macos")]
+    let _ = window_vibrancy::apply_vibrancy(
+        &win,
+        window_vibrancy::NSVisualEffectMaterial::HudWindow,
+        None,
+        Some(18.0),
+    );
+    let _ = win.show();
+    let _ = win.set_focus();
+    Ok(win)
+}
+
+/// 打开一个新的 dsh Web UI 窗口（多窗口：每个窗口独立加载当前模式的 URL）
+#[tauri::command]
+fn new_window(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    let seq = { let mut g = state.window_seq.lock().unwrap(); *g += 1; *g };
+    let label = format!("dsh-{seq}");
+    create_dsh_window(&app, &label)?;
+    Ok(label)
 }
 
 /// 打开 dsh UI（command：供前端按钮调用）；按模式校验就绪条件
@@ -545,6 +630,7 @@ pub fn run() {
             watcher: Arc::new(WatcherShared::default()),
             ctx_menu_window: std::sync::Mutex::new(None),
             ctx_menu_target: std::sync::Mutex::new(None),
+            window_seq: std::sync::Mutex::new(0),
         })
         .invoke_handler(tauri::generate_handler![
             get_status,
@@ -554,6 +640,7 @@ pub fn run() {
             open_config,
             restart_backend,
             open_dsh_ui,
+            new_window,
             save_connection,
             apply_connection_mode,
             show_context_menu,
@@ -563,80 +650,19 @@ pub fn run() {
             window_start_drag,
         ])
         .setup(|app| {
-            // 创建主窗口：加载 index.html（启动 splash + 壳 UI），注入 SHELL_SCRIPT——
-            // WKUserScript 对后续每次导航（dsh 页面 3080/远程）自动重注入，
-            // 因此 navigate 后工具条/设置/右键菜单在 dsh 页面上依然可用。
-            use tauri::{WebviewUrl, WebviewWindowBuilder};
-            #[allow(unused_mut)]
-            let mut builder = WebviewWindowBuilder::new(
-                app,
-                "main",
-                WebviewUrl::App("index.html".into()),
-            )
-            .title("dsh desktop")
-            .inner_size(1280.0, 800.0)
-            .min_inner_size(800.0, 600.0)
-            .resizable(true)
-            .fullscreen(false)
-            .visible(false)
-            .decorations(false);
-            // macOS 专属：Overlay 标题栏 + 红黄绿控制按钮位置（Windows 无这些 API，无边框靠注入岛控制）
-            #[cfg(target_os = "macos")]
-            {
-                builder = builder
-                    .title_bar_style(tauri::TitleBarStyle::Overlay)
-                    .traffic_light_position(tauri::LogicalPosition::new(14.0, 14.0));
-            }
-            let win = builder
-            .initialization_script(shell::SHELL_SCRIPT)
-            // 兜底：导航（含 dsh 页面）后重新注入壳层 UI——
-            // initialization_script 在 navigate 后可能不重跑，on_page_load 保证每次注入
-            .on_page_load(|win, payload| {
-                use tauri::webview::PageLoadEvent;
-                if payload.event() == PageLoadEvent::Finished {
-                    // 先注入当前连接配置（设置面板填充用），再注入壳层 UI
-                    // （__dsh_apply_cfg 由 SHELL_SCRIPT 定义：document start 注入时
-                    // __dsh_cfg 尚不存在，而幂等 guard 会挡第二次 SHELL_SCRIPT，
-                    // 因此这里注入 cfg 后显式调用一次应用，保证模式标签/表单同步）
-                    let (cfg, _) = config::load_config();
-                    let js = format!(
-                        "window.__dsh_cfg = {{ mode: {}, remoteUrl: {}, remoteUser: {} }};\nif (window.__dsh_apply_cfg) window.__dsh_apply_cfg(window.__dsh_cfg);",
-                        serde_json::to_string(&cfg.connection.mode).unwrap_or_else(|_| "\"local\"".into()),
-                        serde_json::to_string(&cfg.connection.remote.url).unwrap_or_else(|_| "\"\"".into()),
-                        serde_json::to_string(&cfg.connection.remote.username).unwrap_or_else(|_| "\"\"".into()),
-                    );
-                    let _ = win.eval(js);
-                    let _ = win.eval(shell::SHELL_SCRIPT);
-                }
-            })
-            .build()
-            .expect("failed to build main window");
-
-            // 无边框窗口效果：Win11 Mica / macOS vibrancy（desktop-polish F-02）
-            #[cfg(target_os = "windows")]
-            {
-                let _ = window_vibrancy::apply_mica(&win, None);
-            }
-            #[cfg(target_os = "macos")]
-            {
-                let _ = window_vibrancy::apply_vibrancy(
-                    &win,
-                    window_vibrancy::NSVisualEffectMaterial::HudWindow,
-                    None,
-                    Some(18.0),
-                );
-            }
-            // 启动 splash 期间先显示窗口（当前加载的是 index.html，自带 splash）
-            let _ = win.show();
-            let _ = win.set_focus();
+            // 创建主窗口：加载 index.html（启动 splash + 壳 UI）；
+            // create_dsh_window 统一注入 SHELL_SCRIPT + on_page_load 配置同步，
+            // 多窗口（dsh-<seq>）复用同一逻辑直接加载 dsh Web UI。
+            create_dsh_window(app.handle(), "main").expect("failed to build main window");
 
             // 托盘
             let open = MenuItem::with_id(app, "open", "打开 dsh Web UI", true, None::<&str>)?;
+            let new_win = MenuItem::with_id(app, "new-window", "新建窗口", true, None::<&str>)?;
             let settings = MenuItem::with_id(app, "settings", "设置（远程访问）", true, None::<&str>)?;
             let check = MenuItem::with_id(app, "check", "立即检查更新", true, None::<&str>)?;
             let cfg_item = MenuItem::with_id(app, "config", "编辑配置文件", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &settings, &check, &cfg_item, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &new_win, &settings, &check, &cfg_item, &quit])?;
 
             let tray_icon = app.default_window_icon().cloned();
             let tray_builder = TrayIconBuilder::with_id("main-tray");
@@ -651,6 +677,9 @@ pub fn run() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => {
                         open_dsh_window(app);
+                    }
+                    "new-window" => {
+                        let _ = new_window(app.clone(), app.state::<AppState>());
                     }
                     "settings" => {
                         if let Some(win) = app.get_webview_window("main") {
@@ -695,6 +724,11 @@ pub fn run() {
                 let quit_app = app.handle().clone();
                 app.listen("dsh-quit", move |_| {
                     quit_app.exit(0);
+                });
+                let new_win_app = app.handle().clone();
+                app.listen("dsh-new-window", move |_| {
+                    // 灵动岛「新建窗口」按钮（远程 origin 下自定义 command 被 ACL 拒，走事件桥接）
+                    let _ = new_window(new_win_app.clone(), new_win_app.state::<AppState>());
                 });
                 let save_app = app.handle().clone();
                 let save_dsh = app.state::<AppState>().dsh.0.clone();

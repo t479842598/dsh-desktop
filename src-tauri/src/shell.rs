@@ -132,9 +132,10 @@ pub const SHELL_SCRIPT: &str = r#"
     '<span class="sep"></span>' +
     '<button id="dsh-btn-settings" title="设置">设置</button>' +
     '<span class="sep"></span>' +
+    '<button class="win-btn" id="dsh-btn-new" title="新建窗口">⧉</button>' +
     '<button class="win-btn" id="dsh-btn-min" title="缩小">─</button>' +
     '<button class="win-btn" id="dsh-btn-max" title="放大">▢</button>' +
-    '<button class="win-btn quit-btn" id="dsh-btn-close" title="关闭">✕</button>'
+    '<button class="win-btn quit-btn" id="dsh-btn-close" title="关闭当前窗口">✕</button>'
   document.documentElement.appendChild(island)
 
   // ---- 设置面板（从灵动岛下方展开）----
@@ -227,11 +228,14 @@ pub const SHELL_SCRIPT: &str = r#"
   document.getElementById('dsh-close-panel').addEventListener('click', function () {
     panel.classList.remove('open')
   })
+  // 新建窗口：当前模式下再开一个 dsh Web UI 窗口（多窗口）
+  document.getElementById('dsh-btn-new').addEventListener('click', function () { emit('dsh-new-window') })
   document.getElementById('dsh-btn-min').addEventListener('click', function () { invoke('plugin:window|minimize').catch(function () {}) })
   document.getElementById('dsh-btn-min2').addEventListener('click', function () { invoke('plugin:window|minimize').catch(function () {}) })
   document.getElementById('dsh-btn-max').addEventListener('click', function () { invoke('plugin:window|toggle_maximize').catch(function () {}) })
   document.getElementById('dsh-btn-max2').addEventListener('click', function () { invoke('plugin:window|toggle_maximize').catch(function () {}) })
-  document.getElementById('dsh-btn-close').addEventListener('click', function () { emit('dsh-quit') })
+  // ✕ 关闭当前窗口（main 窗口隐藏到托盘，其他窗口直接关闭）；退出应用走设置面板/托盘菜单
+  document.getElementById('dsh-btn-close').addEventListener('click', function () { invoke('plugin:window|close').catch(function () {}) })
   document.getElementById('dsh-btn-quit2').addEventListener('click', function () { emit('dsh-quit') })
 
   // 长按拖动：core:window start_dragging
