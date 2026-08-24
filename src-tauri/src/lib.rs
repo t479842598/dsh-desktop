@@ -55,10 +55,6 @@ fn get_status(_app: AppHandle, state: State<'_, AppState>) -> serde_json::Value 
 
 #[tauri::command]
 fn restart_dsh(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
-    // 远程模式没有本地 dsh 子进程，拒绝重启并提示
-    if config::load_config().0.connection.mode == "remote" {
-        return Err("当前为远程模式，本地 dsh 未启动".into());
-    }
     // 异步执行：重启包含 kill + spawn + 就绪探测（最长 30s），不能阻塞命令线程
     let app2 = app.clone();
     let dsh_handle = state.dsh.0.clone();
@@ -120,10 +116,6 @@ fn open_config(_app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn restart_backend(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
-    // 远程模式没有本地 dsh 子进程，拒绝重启并提示
-    if config::load_config().0.connection.mode == "remote" {
-        return Err("当前为远程模式，本地 dsh 未启动".into());
-    }
     // 保存远程访问等配置后重启 dsh 服务（异步，避免阻塞命令线程）
     let app2 = app.clone();
     let dsh_handle = state.dsh.0.clone();
@@ -163,34 +155,54 @@ fn percent_encode(input: &str) -> String {
     out
 }
 
-/// 构建远程访问 URL：配置的 URL + Basic Auth userinfo（`https://user:pass@host/...`）
-/// 若 URL 已含 userinfo（如 `https://user@host`）则不重复插入。
-fn remote_url_with_auth(cfg: &config::AppConfig) -> String {
-    let rc = &cfg.connection.remote;
-    let mut url = rc.url.trim().to_string();
-    if !url.is_empty() && !rc.username.is_empty() {
-        // 检查是否已含 userinfo（:// 后到下一个 / 或 @ 之间的 @ 存在即已带凭证）
-        let has_userinfo = url.find("://").is_some_and(|i| {
-            let rest = &url[i + 3..];
-            let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-            rest[..authority_end].contains('@')
-        });
-        if !has_userinfo {
-            let creds = format!(
-                "{}:{}",
-                percent_encode(&rc.username),
-                percent_encode(&rc.password)
-            );
-            if let Some(idx) = url.find("://") {
-                url.insert_str(idx + 3, &format!("{creds}@"));
-            }
+/// 构建带 Basic Auth userinfo 的 URL（`https://user:pass@host/...`）。
+/// 若 URL 已含 userinfo（如 `https://user@host`）则不重复插入；账号为空时原样返回。
+fn build_url_with_auth(url: &str, username: &str, password: &str) -> String {
+    let mut url = url.trim().to_string();
+    if url.is_empty() || username.is_empty() {
+        return url;
+    }
+    // 检查是否已含 userinfo（:// 后到下一个 / 或 @ 之间的 @ 存在即已带凭证）
+    let has_userinfo = url.find("://").is_some_and(|i| {
+        let rest = &url[i + 3..];
+        let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+        rest[..authority_end].contains('@')
+    });
+    if !has_userinfo {
+        let creds = format!(
+            "{}:{}",
+            percent_encode(username),
+            percent_encode(password)
+        );
+        if let Some(idx) = url.find("://") {
+            url.insert_str(idx + 3, &format!("{creds}@"));
         }
     }
     url
 }
 
-/// 把主窗口导航到 dsh Web UI（本地 3080 或远程 URL）；单窗口方案：
-/// 不再开独立 dsh 窗口，壳 UI 由注入脚本（shell.rs SHELL_SCRIPT）叠加在 dsh 页面上。
+/// 构建远程访问 URL：配置的 URL + Basic Auth userinfo
+fn remote_url_with_auth(cfg: &config::AppConfig) -> String {
+    let rc = &cfg.connection.remote;
+    build_url_with_auth(&rc.url, &rc.username, &rc.password)
+}
+
+/// 把主窗口导航到指定 URL（单窗口方案：壳 UI 由注入脚本叠加在 dsh 页面上）
+fn navigate_main(app: &AppHandle, url: &str) {
+    let Ok(parsed) = url.parse::<tauri::Url>() else {
+        let _ = app.emit("dsh-crashed", format!("URL 无效: {url}"));
+        return;
+    };
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.navigate(parsed);
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+}
+
+/// 把主窗口导航到 dsh Web UI（本地 3080 或远程 URL）。
+/// 供设置面板「保存并应用」等**用户显式选择**后导航使用；
+/// 启动流程不经过这里（见 boot：本地优先，失败弹窗由前端处理）。
 fn open_dsh_window(app: &AppHandle) {
     let (cfg, _) = config::load_config();
     let url = if cfg.connection.mode == "remote" {
@@ -198,15 +210,7 @@ fn open_dsh_window(app: &AppHandle) {
     } else {
         format!("http://127.0.0.1:{}", cfg.dsh.port)
     };
-    if let Some(win) = app.get_webview_window("main") {
-        let Ok(parsed) = url.parse::<tauri::Url>() else {
-            let _ = app.emit("dsh-crashed", format!("URL 无效: {url}"));
-            return;
-        };
-        let _ = win.navigate(parsed);
-        let _ = win.show();
-        let _ = win.set_focus();
-    }
+    navigate_main(app, &url);
 }
 
 /// 每次页面加载完成后：先注入当前连接配置（模式标签/设置表单同步用），再注入壳层 UI。
@@ -292,7 +296,9 @@ fn new_window(app: AppHandle, state: State<'_, AppState>) -> Result<String, Stri
     Ok(label)
 }
 
-/// 打开 dsh UI（command：供前端按钮调用）；按模式校验就绪条件
+/// 打开 dsh UI（command：供前端按钮调用）。遵循保存的连接配置：
+/// 远程模式（用户在设置里显式保存的）→ 打开远程 URL；否则要求本地 3080 就绪。
+/// 启动流程不经过这里（boot 本地优先，失败弹窗由前端处理）。
 #[tauri::command]
 fn open_dsh_ui(app: AppHandle) -> Result<String, String> {
     let (cfg, _) = config::load_config();
@@ -301,14 +307,45 @@ fn open_dsh_ui(app: AppHandle) -> Result<String, String> {
         if url.is_empty() {
             return Err("远程模式未配置 URL，请先在设置里填写".into());
         }
-        open_dsh_window(&app);
+        navigate_main(&app, &url);
         return Ok("已打开远程 dsh Web UI".into());
     }
     if !dsh::port_open(cfg.dsh.port) {
-        return Err(format!("dsh 服务未就绪（端口 {} 无响应），请稍后再试", cfg.dsh.port));
+        return Err(format!(
+            "dsh 服务未就绪（端口 {} 无响应），请稍后再试或连接其他地址",
+            cfg.dsh.port
+        ));
     }
-    open_dsh_window(&app);
+    navigate_main(&app, &format!("http://127.0.0.1:{}", cfg.dsh.port));
     Ok("已打开 dsh Web UI".into())
+}
+
+/// 连接到指定地址（本地 3080 不可用时的备选入口，如远程 dsh 实例地址）。
+/// 仅本次会话生效、**不写入配置**——避免把一次性地址持久化成「下次启动自动连远程」。
+#[tauri::command]
+fn connect_to_address(
+    app: AppHandle,
+    url: String,
+    username: String,
+    password: String,
+) -> Result<String, String> {
+    let mut url = url.trim().to_string();
+    if url.is_empty() {
+        return Err("请输入连接地址".into());
+    }
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        url = format!("http://{url}");
+    }
+    let target = build_url_with_auth(&url, username.trim(), &password);
+    let parsed: tauri::Url = target
+        .parse()
+        .map_err(|e| format!("URL 无效: {url}: {e}"))?;
+    if let Some(win) = app.get_webview_window("main") {
+        win.navigate(parsed).map_err(|e| format!("导航失败: {e}"))?;
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+    Ok("已连接到指定地址".into())
 }
 
 /// 连接模式切换后的进程编排：切远程→停本地 dsh；切本地→重启 dsh
@@ -549,17 +586,12 @@ fn handle_ctx_menu_action(app: &AppHandle, action: &str) {
     }
 }
 
-/// 启动流程：dsh 进程（本地模式）+ watcher
+/// 启动流程：dsh 进程（本地优先）+ watcher。
+/// 无论配置里保存的是 local 还是 remote，启动时**总是**先拉起本机 dsh 并连接
+/// 127.0.0.1:3080；只有本地服务不可用（启动失败/超时）时，前端才弹出
+/// 「连接其他地址」对话框让用户手动选择，绝不自动导航到保存的远程 URL。
+/// 保存的远程地址只作为该对话框的预填备选。
 fn boot(app: &AppHandle, state: &AppState) {
-    let (cfg, _) = config::load_config();
-    // 远程模式：不启动本地 dsh 子进程（连接远程实例），仅运行 watcher 保持自动更新
-    if cfg.connection.mode == "remote" {
-        log::info!("[boot] 远程模式，跳过本地 dsh 启动");
-        watcher::start_watcher(app.clone(), state.watcher.clone());
-        // 直接导航主窗口到远程 dsh UI
-        open_dsh_window(app);
-        return;
-    }
     // 1) 启动 dsh（独立 std::thread，完全脱离 Tauri async runtime，
     //    避免 runtime 线程池环境导致子进程启动异常；就绪后发事件）
     {
@@ -575,9 +607,16 @@ fn boot(app: &AppHandle, state: &AppState) {
             }
             match dsh.wait_ready(&cfg.dsh) {
                 Ok(()) => {
+                    // 本地已就绪：把持久化模式归位 local，避免下次启动再被旧的
+                    // remote 配置带偏（本地优先策略下 remote 仅作备选地址）
+                    let (mut cfg2, _) = config::load_config();
+                    if cfg2.connection.mode != "local" {
+                        cfg2.connection.mode = "local".into();
+                        let _ = config::save_config(&cfg2);
+                    }
                     let _ = app.emit("dsh-ready", ());
-                    // 双击启动后自动打开 dsh Web UI 窗口
-                    open_dsh_window(&app);
+                    // 双击启动后自动打开本地 dsh Web UI 窗口
+                    navigate_main(&app, &format!("http://127.0.0.1:{}", cfg.dsh.port));
                 }
                 Err(e) => {
                     dsh.last_error = Some(e.clone());
@@ -640,6 +679,7 @@ pub fn run() {
             open_config,
             restart_backend,
             open_dsh_ui,
+            connect_to_address,
             new_window,
             save_connection,
             apply_connection_mode,

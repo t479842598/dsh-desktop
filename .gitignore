@@ -13,3 +13,6 @@ config.json
 # 系统
 .DS_Store
 *.log
+
+# lrnev 运行时状态（agent 心跳/注册表，机器本地数据）
+.lrnev/agents/

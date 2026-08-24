@@ -133,6 +133,7 @@ pub const SHELL_SCRIPT: &str = r#"
     '<button id="dsh-btn-settings" title="设置">设置</button>' +
     '<span class="sep"></span>' +
     '<button class="win-btn" id="dsh-btn-new" title="新建窗口">⧉</button>' +
+    '<button class="win-btn" id="dsh-btn-reload" title="刷新">⟳</button>' +
     '<button class="win-btn" id="dsh-btn-min" title="缩小">─</button>' +
     '<button class="win-btn" id="dsh-btn-max" title="放大">▢</button>' +
     '<button class="win-btn quit-btn" id="dsh-btn-close" title="关闭当前窗口">✕</button>'
@@ -230,6 +231,8 @@ pub const SHELL_SCRIPT: &str = r#"
   })
   // 新建窗口：当前模式下再开一个 dsh Web UI 窗口（多窗口）
   document.getElementById('dsh-btn-new').addEventListener('click', function () { emit('dsh-new-window') })
+  // 刷新：重载当前页面（本地/远程页面通用，页面级操作无需桥接）
+  document.getElementById('dsh-btn-reload').addEventListener('click', function () { location.reload() })
   document.getElementById('dsh-btn-min').addEventListener('click', function () { invoke('plugin:window|minimize').catch(function () {}) })
   document.getElementById('dsh-btn-min2').addEventListener('click', function () { invoke('plugin:window|minimize').catch(function () {}) })
   document.getElementById('dsh-btn-max').addEventListener('click', function () { invoke('plugin:window|toggle_maximize').catch(function () {}) })

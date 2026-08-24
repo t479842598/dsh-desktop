@@ -82,9 +82,26 @@ async function refreshStatus() {
 
     // 同步设置页表单（仅在用户未编辑时）
     syncSettingsForm(st);
+    updateConnectPanel(st);
   } catch (e) {
     el("dsh-status").className = "status-line err";
     el("dsh-status").textContent = `查询状态失败: ${e}`;
+  }
+}
+
+/** 本地 3080 未就绪时展示「连接其他地址」卡片；就绪后隐藏 */
+function updateConnectPanel(st: DshStatus) {
+  const panel = el<HTMLElement>("panel-connect");
+  if (!panel) return;
+  if (!st.dsh_ready) {
+    panel.classList.remove("hidden");
+    // 预填上次保存的远程地址作为备选（仅预填，绝不自动连接）
+    const urlInput = el<HTMLInputElement>("connect-url");
+    const userInput = el<HTMLInputElement>("connect-username");
+    if (urlInput.value === "") urlInput.value = st.remote_url ?? "";
+    if (userInput.value === "") userInput.value = st.remote_username ?? "";
+  } else {
+    panel.classList.add("hidden");
   }
 }
 
@@ -216,6 +233,50 @@ async function init() {
       toast(msg);
     } catch (e) {
       toast(`打开失败: ${e}`);
+    }
+  });
+
+  // 「连接其他地址」：本地 3080 不可用时手动连接指定地址（仅本次会话，不写配置）
+  el("btn-connect-addr").addEventListener("click", async () => {
+    const url = el<HTMLInputElement>("connect-url").value.trim();
+    const username = el<HTMLInputElement>("connect-username").value.trim();
+    const password = el<HTMLInputElement>("connect-password").value;
+    const result = el("connect-result");
+    if (!url) {
+      result.textContent = "✗ 请输入连接地址";
+      result.className = "save-result err";
+      return;
+    }
+    try {
+      const msg: string = await invoke("connect_to_address", {
+        url,
+        username,
+        password,
+      });
+      result.textContent = "✓ " + msg;
+      result.className = "save-result";
+    } catch (e) {
+      result.textContent = `✗ ${e}`;
+      result.className = "save-result err";
+    }
+  });
+
+  // 重试本地 3080：重启本地 dsh，就绪后自动打开 Web UI
+  el("btn-retry-local").addEventListener("click", async () => {
+    const result = el("connect-result");
+    result.textContent = "正在重试本地服务…";
+    result.className = "save-result";
+    try {
+      await invoke("restart_dsh");
+      setTimeout(async () => {
+        await refreshStatus();
+        if (currentStatus?.dsh_ready) {
+          await invoke("open_dsh_ui").catch(() => {});
+        }
+      }, 1500);
+    } catch (e) {
+      result.textContent = `✗ ${e}`;
+      result.className = "save-result err";
     }
   });
 

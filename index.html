@@ -40,6 +40,33 @@
           </div>
         </section>
 
+        <!-- 本地 3080 不可用时的备选连接入口：启动时总是先连本地，连不上才需要手动填地址 -->
+        <section id="panel-connect" class="card hidden">
+          <h2>本地服务未就绪，连接其他地址？</h2>
+          <p class="hint">
+            本机 dsh（127.0.0.1:3080）暂时无法连接。可以输入其他 dsh 实例地址
+            （如远程服务器 / 网关地址）直接连接，或重试本地服务。
+            此处输入的地址仅本次生效，下次启动仍默认连接本地 3080。
+          </p>
+          <div class="field">
+            <span>连接地址</span>
+            <input type="text" id="connect-url" placeholder="http://host:3080 或 https://…" autocomplete="off" />
+          </div>
+          <div class="field">
+            <span>账号（可选，Basic Auth）</span>
+            <input type="text" id="connect-username" placeholder="username" autocomplete="off" />
+          </div>
+          <div class="field">
+            <span>密码（可选）</span>
+            <input type="password" id="connect-password" placeholder="password" autocomplete="off" />
+          </div>
+          <div class="actions">
+            <button id="btn-connect-addr" class="btn primary">连接该地址</button>
+            <button id="btn-retry-local" class="btn">重试本地 3080</button>
+            <span id="connect-result" class="save-result"></span>
+          </div>
+        </section>
+
         <section class="card">
           <h2>自动更新管线</h2>
           <div id="watcher-status" class="status-line">—</div>

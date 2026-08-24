@@ -213,7 +213,7 @@ pub async fn poll_now_cmd(app: AppHandle) -> Result<Vec<PollResult>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{AppConfig, DshConfig, NotifyConfig, RebuildConfig, RemoteConfig, RepoConfig};
+    use crate::config::{AppConfig, ConnectionConfig, DshConfig, NotifyConfig, RebuildConfig, RemoteConfig, RepoConfig};
     use std::fs;
     use std::path::PathBuf;
 
@@ -260,6 +260,7 @@ mod tests {
                 rebuild: RebuildConfig::default(),
             }],
             remote: RemoteConfig::default(),
+            connection: ConnectionConfig::default(),
         }
     }
 
