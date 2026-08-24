@@ -30,10 +30,19 @@ impl DshProcess {
         if self.child.is_some() {
             let _ = self.kill();
         }
-        // 端口占用自愈：若目标端口已被占用（通常是上次退出残留的孤儿 dsh），
-        // 杀掉占用该端口的 node/tsx 进程后重试，避免 EADDRINUSE 导致服务起不来
+        // 健康复用：端口已由外部常驻服务（如 launchd KeepAlive）提供可用的 dsh Web
+        // 服务时直接复用、不杀不拉——否则与 KeepAlive 服务互抢端口（杀→秒级重启
+        // →自己拉起的 dsh 启动慢，bind 时 EADDRINUSE 崩溃）会导致 splash 卡死
+        if healthy_dsh(cfg.port) {
+            log::info!("[dsh] 端口 {} 已有健康 dsh 服务，直接复用", cfg.port);
+            self.ready = false;
+            self.last_error = None;
+            return Ok(());
+        }
+        // 端口占用自愈：仅当端口被非健康进程占用（连不上/非 dsh）时，杀掉占用该
+        // 端口的 node/tsx 进程后重试，避免 EADDRINUSE 导致服务起不来
         if port_open(cfg.port) {
-            log::warn!("[dsh] 端口 {} 已被占用，尝试清理残留进程", cfg.port);
+            log::warn!("[dsh] 端口 {} 被非健康进程占用，尝试清理残留进程", cfg.port);
             kill_port_owner(cfg.port);
             std::thread::sleep(std::time::Duration::from_millis(800));
             if port_open(cfg.port) {
@@ -94,17 +103,20 @@ impl DshProcess {
         command
             .stdout(Stdio::from(f.try_clone().map_err(|e| e.to_string())?))
             .stderr(Stdio::from(f));
-        // GUI 应用从 Finder 启动时 PATH 精简，补全常见 Node 工具链路径
         // GUI 应用从 Finder 启动时 PATH 精简，补全常见 Node 工具链路径（macOS）
         #[cfg(target_os = "macos")]
         {
             let mut path = std::env::var("PATH").unwrap_or_default();
-            for extra in [
-                "/opt/homebrew/bin",
-                "/usr/local/bin",
-                "/usr/local/opt/node/bin",
-                "/Users/qingtang/.fnm/current/bin",
-            ] {
+            // dsh 脚本 shebang 为 #!/usr/bin/env node，必须保证 node 在 PATH 中；
+            // dsh 命令所在目录通常即 node 所在目录（如 ~/.local/node/bin），优先补入
+            if let Some(dir) = std::path::Path::new(&cfg.command[0]).parent() {
+                let dir = dir.to_string_lossy().to_string();
+                if !path.split(':').any(|p| p == dir) {
+                    path.push(':');
+                    path.push_str(&dir);
+                }
+            }
+            for extra in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/local/opt/node/bin"] {
                 if !path.split(':').any(|p| p == extra) {
                     path.push(':');
                     path.push_str(extra);
@@ -145,9 +157,20 @@ impl DshProcess {
         loop {
             if let Some(child) = self.child.as_mut() {
                 if child.try_wait().ok().flatten().is_some() {
-                    // 子进程已退出
-                    self.ready = false;
+                    // 子进程已退出：可能是与常驻服务（launchd KeepAlive）抢端口时
+                    // 落败，自己拉起的实例因 EADDRINUSE 崩溃。此时给端口一段宽限期，
+                    // 若已被健康 dsh 服务接管（如 launchd 重启的实例）则直接复用
+                    // 视为就绪；宽限期后仍无健康服务才报错，避免 splash 永久卡死。
                     self.child = None;
+                    let grace = Instant::now() + Duration::from_secs(15);
+                    while Instant::now() < grace && Instant::now() < deadline {
+                        if healthy_dsh(cfg.port) {
+                            self.ready = true;
+                            return Ok(());
+                        }
+                        std::thread::sleep(Duration::from_millis(500));
+                    }
+                    self.ready = false;
                     return Err("dsh 进程已退出".into());
                 }
             }
@@ -270,11 +293,183 @@ pub fn port_open(port: u16) -> bool {
     .is_ok()
 }
 
+/// 探测端口是否已在提供健康的 dsh Web 服务：TCP 可连 + HTTP 200 + 页面含 dsh 特征。
+/// 用于「健康复用」判定：只有确认是 dsh 页面才复用，避免把非 dsh 的占用进程
+/// 误当服务（此类情况仍走自愈杀进程路径）。dsh 服务可能瞬时繁忙（如刚被
+/// launchd 重启、多实例竞争时），故失败后重试 3 次，避免误判导致与常驻服务互杀。
+fn healthy_dsh(port: u16) -> bool {
+    for attempt in 0..3 {
+        if healthy_dsh_once(port) {
+            return true;
+        }
+        if attempt < 2 {
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    }
+    false
+}
+
+fn healthy_dsh_once(port: u16) -> bool {
+    let Ok(mut stream) = TcpStream::connect_timeout(
+        &format!("127.0.0.1:{port}").parse().unwrap(),
+        Duration::from_millis(300),
+    ) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(3000)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(1500)));
+    use std::io::{Read, Write};
+    // Accept-Encoding: identity 避免 gzip 压缩导致 body 里检测不到 dsh 特征
+    if stream
+        .write_all(
+            format!(
+                "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .is_err()
+    {
+        return false;
+    }
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 2048];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                buf.extend_from_slice(&chunk[..n]);
+                let text = String::from_utf8_lossy(&buf);
+                if text.contains(" 200 ") && text.to_lowercase().contains("dsh") {
+                    return true;
+                }
+                if buf.len() > 8192 {
+                    break;
+                }
+            }
+        }
+    }
+    let text = String::from_utf8_lossy(&buf);
+    text.starts_with("HTTP/1.") && text.contains(" 200 ") && text.to_lowercase().contains("dsh")
+}
+
 /// 全局 dsh 进程句柄（Arc 便于跨线程克隆）
 pub struct DshHandle(pub Arc<Mutex<DshProcess>>);
 
 impl DshHandle {
     pub fn new() -> Self {
         Self(Arc::new(Mutex::new(DshProcess::new())))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// 起一个返回固定 body 的 HTTP 200 服务，模拟 dsh Web UI（或普通服务）
+    fn serve_http(port: u16, body: &'static str) -> std::thread::JoinHandle<()> {
+        let listener = TcpListener::bind(("127.0.0.1", port)).unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut s) = stream else { continue };
+                let mut buf = [0u8; 1024];
+                let _ = s.read(&mut buf);
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = s.write_all(resp.as_bytes());
+            }
+        })
+    }
+
+    fn wait_listening(port: u16) {
+        for _ in 0..100 {
+            if port_open(port) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn healthy_dsh_detects_dsh_web_service() {
+        let port = 48080;
+        let _srv = serve_http(
+            port,
+            "<html data-dsh-skin=\"summer-liquid-glass\"><head></head><body>dsh client modules</body></html>",
+        );
+        wait_listening(port);
+        assert!(healthy_dsh(port));
+    }
+
+    #[test]
+    fn healthy_dsh_rejects_non_dsh_service() {
+        let port = 48081;
+        let _srv = serve_http(port, "<html><body>some other service</body></html>");
+        wait_listening(port);
+        assert!(!healthy_dsh(port));
+    }
+
+    #[test]
+    fn healthy_dsh_false_when_nothing_listens() {
+        let port = 48082;
+        let l = TcpListener::bind(("127.0.0.1", port)).unwrap();
+        drop(l); // 端口已释放，无监听
+        assert!(!healthy_dsh(port));
+    }
+
+    #[test]
+    fn start_reuses_healthy_service_without_spawning() {
+        let port = 48083;
+        let _srv = serve_http(port, "<html data-dsh-skin=\"x\">dsh ui</html>");
+        wait_listening(port);
+        let mut cfg = DshConfig::default();
+        cfg.port = port;
+        let mut dsh = DshProcess::new();
+        dsh.start(&cfg).expect("复用健康服务应成功");
+        assert!(dsh.child.is_none(), "复用外部服务时不应 spawn 子进程");
+        dsh.wait_ready(&cfg).expect("外部服务就绪探测应成功");
+        assert!(dsh.ready);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wait_ready_reuses_surviving_service_after_child_exit() {
+        let port = 48084;
+        // 模拟 launchd KeepAlive：app 自己的子进程先退出（EADDRINUSE 崩溃），
+        // 稍后常驻服务重启接管端口
+        let srv = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(1200));
+            let listener = TcpListener::bind(("127.0.0.1", port)).unwrap();
+            for stream in listener.incoming() {
+                let Ok(mut s) = stream else { continue };
+                let mut buf = [0u8; 1024];
+                let _ = s.read(&mut buf);
+                let body = "<html data-dsh-skin=\"x\">dsh ui</html>";
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = s.write_all(resp.as_bytes());
+            }
+        });
+        let child = std::process::Command::new("sleep")
+            .arg("0.3")
+            .spawn()
+            .expect("spawn child");
+        let mut dsh = DshProcess::new();
+        dsh.child = Some(child);
+        let mut cfg = DshConfig::default();
+        cfg.port = port;
+        cfg.ready_timeout_sec = 10;
+        let r = dsh.wait_ready(&cfg);
+        // 服务线程常驻等待连接，进程退出时自动结束，无需 join
+        assert!(r.is_ok(), "子进程退出后应复用接管端口的外部服务: {:?}", r);
+        assert!(dsh.ready);
+        assert!(dsh.child.is_none());
     }
 }

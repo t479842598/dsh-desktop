@@ -2,8 +2,9 @@
 //! 主窗口直接加载 dsh 页面（本地 3080 / 远程 URL）。此脚本在**顶部中间**注入
 //! 一个"灵动岛"式悬浮手柄：
 //! - 平时收成小胶囊（鼠标移开自动收起），鼠标靠近自动展开完整工具条
-//! - 展开后可见：品牌、模式标签、"设置"按钮、窗口控制（缩小/放大/关闭）
-//! - **长按（按住约 250ms）灵动岛 = 拖动整个窗口**（调用 Rust start_dragging）
+//! - 展开后可见：拖动手柄、品牌、模式标签、"设置"按钮、窗口控制（缩小/放大/关闭）
+//! - 按住最左侧"⠿"手柄拖动 = 移动工具条位置（记住位置，刷新后保持）；
+//!   按住工具条背景（非按钮区域）拖动 = 拖动整个窗口（调用 Rust start_dragging）
 //! - 点击"设置"在岛下方展开设置面板（连接模式 + 远程凭证 + 保存）
 //! 右键菜单桥接与启动 splash 同样由本脚本提供。
 //! 所有交互通过 `__TAURI_INTERNALS__.invoke` 与 Rust 通信。
@@ -54,6 +55,8 @@ pub const SHELL_SCRIPT: &str = r#"
     font-size: 12px; padding: 4px 8px; border-radius: 6px; line-height: 1; white-space: nowrap; }
   #dsh-island button:hover { background: rgba(255, 255, 255, 0.1); color: #e6e9ef; }
   #dsh-island .win-btn { font-size: 14px; padding: 3px 7px; }
+  #dsh-island .grip { cursor: grab; }
+  #dsh-island .grip:active { cursor: grabbing; }
   #dsh-island .quit-btn { color: #f85149; }
   #dsh-island .quit-btn:hover { background: rgba(248, 81, 73, 0.15); color: #f85149; }
 
@@ -131,6 +134,7 @@ pub const SHELL_SCRIPT: &str = r#"
   var island = document.createElement('div')
   island.id = 'dsh-island'
   island.innerHTML =
+    '<button class="win-btn grip" id="dsh-btn-drag" title="按住拖动位置">⠿</button>' +
     '<span class="brand"><svg viewBox="0 0 143 23" xmlns="http://www.w3.org/2000/svg"><path d="' + ICON + '"/></svg><b>DeepSeek Harness</b></span>' +
     '<span class="mode-tag" id="dsh-island-mode">本地</span>' +
     '<span class="sep"></span>' +
@@ -197,8 +201,6 @@ pub const SHELL_SCRIPT: &str = r#"
   } catch (e) {}
 
   // ---- 灵动岛：平时隐藏，鼠标靠近窗口顶部自动浮现，移开自动收起；长按拖动窗口 ----
-  var pressTimer = null
-  var dragStarted = false
   var hideTimer = null
   var inTopZone = false
 
@@ -236,6 +238,8 @@ pub const SHELL_SCRIPT: &str = r#"
 
   document.getElementById('dsh-btn-settings').addEventListener('click', function () {
     panel.classList.toggle('open')
+    // 面板与工具条同左对齐（工具条可能被拖到别处）
+    if (panel.classList.contains('open')) panel.style.left = island.offsetLeft + 'px'
   })
   document.getElementById('dsh-close-panel').addEventListener('click', function () {
     panel.classList.remove('open')
@@ -252,21 +256,51 @@ pub const SHELL_SCRIPT: &str = r#"
   document.getElementById('dsh-btn-close').addEventListener('click', function () { invoke('plugin:window|close').catch(function () {}) })
   document.getElementById('dsh-btn-quit2').addEventListener('click', function () { emit('dsh-quit') })
 
-  // 长按拖动：core:window start_dragging
+  // ---- 拖动：⠿ 手柄 = 移动工具条位置（记住位置，刷新后保持）；背景（非按钮区域）= 拖动整个窗口 ----
+  var handle = document.getElementById('dsh-btn-drag')
+  // 恢复上次保存的位置（localStorage 存的是可视左边缘，left 需加回半宽抵消 translateX(-50%)）
+  try {
+    var savedLeft = localStorage.getItem('dsh-island-left')
+    if (savedLeft !== null) {
+      requestAnimationFrame(function () {
+        island.style.left = (Number(savedLeft) + island.offsetWidth / 2) + 'px'
+      })
+    }
+  } catch (e) {}
+  handle.addEventListener('mousedown', function (e) {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null }
+    island.classList.add('dragging')
+    var startX = e.clientX
+    var startLeft = island.offsetLeft
+    var w = island.offsetWidth
+    function move(ev) {
+      var visual = startLeft + (ev.clientX - startX) - w / 2
+      visual = Math.max(100, Math.min(window.innerWidth - w - 8, visual))
+      island.style.left = (visual + w / 2) + 'px'
+      if (panel.classList.contains('open')) panel.style.left = island.offsetLeft + 'px'
+    }
+    function up() {
+      window.removeEventListener('mousemove', move)
+      window.removeEventListener('mouseup', up)
+      island.classList.remove('dragging')
+      try { localStorage.setItem('dsh-island-left', String(island.offsetLeft - island.offsetWidth / 2)) } catch (e) {}
+    }
+    window.addEventListener('mousemove', move)
+    window.addEventListener('mouseup', up)
+  })
+  // 工具条背景按住即拖动整个窗口（start_dragging 由系统接管）；按钮区域保持正常点击
   island.addEventListener('mousedown', function (e) {
     if (e.button !== 0) return
-    dragStarted = false
-    island.classList.add('dragging')
+    if (e.target.closest && e.target.closest('button')) return
     e.preventDefault()
-    pressTimer = setTimeout(function () {
-      dragStarted = true
-      invoke('plugin:window|start_dragging').catch(function () {})
-    }, 250)
+    island.classList.add('dragging')
+    invoke('plugin:window|start_dragging').catch(function () {})
   })
   window.addEventListener('mouseup', function () {
-    if (pressTimer) { clearTimeout(pressTimer); pressTimer = null }
     island.classList.remove('dragging')
-    dragStarted = false
   })
 
   document.getElementById('dsh-btn-save').addEventListener('click', function () {
