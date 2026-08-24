@@ -1,6 +1,8 @@
 use std::net::TcpStream;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -74,14 +76,20 @@ impl DshProcess {
         }
         #[cfg(windows)]
         {
-            // Windows：cmd /C，双引号转义（PATH 经 PATHEXT 解析 pnpm.cmd 等）
-            let mut shell_cmd = String::from("cd /d \"");
-            shell_cmd.push_str(&win_quote(&cfg.cwd));
-            shell_cmd.push_str("\" && ");
-            let parts = cfg.command.iter().map(|p| win_quote(p)).collect::<Vec<_>>().join(" ");
-            shell_cmd.push_str(&parts);
-            command = Command::new("cmd");
-            command.args(["/C", &shell_cmd]);
+            // Windows：直接以 dsh.cmd 作为程序启动（Rust 会自动按 PATHEXT 找到
+            // dsh.cmd 并用 cmd /c 运行），工作目录用 current_dir 设置。
+            // 不要手动拼 `cd /d "..." && cmd /C ...` 字符串：Rust 的 args 会给
+            // 含空格的参数整体加引号，与 cmd 的引号解析冲突（嵌套引号 → UNC
+            // 路径 / 语法错误，3080 起不来）。
+            // CREATE_NO_WINDOW：隐藏 cmd 控制台窗口（否则启动 dsh 时闪终端）。
+            if cfg.command.is_empty() {
+                return Err("dsh.command 为空".into());
+            }
+            let mut cmd = Command::new(&cfg.command[0]);
+            cmd.args(&cfg.command[1..]);
+            cmd.current_dir(&cfg.cwd);
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            command = cmd;
         }
         command
             .stdout(Stdio::from(f.try_clone().map_err(|e| e.to_string())?))

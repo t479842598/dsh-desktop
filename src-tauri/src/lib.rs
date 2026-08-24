@@ -250,7 +250,7 @@ fn create_dsh_window(app: &AppHandle, label: &str) -> Result<tauri::WebviewWindo
         WebviewUrl::External(parsed)
     };
     let mut builder = WebviewWindowBuilder::new(app, label, target)
-        .title("dsh desktop")
+        .title("DeepSeek Harness desktop")
         .inner_size(1280.0, 800.0)
         .min_inner_size(800.0, 600.0)
         .resizable(true)

@@ -5,6 +5,32 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.5.0] - 2026-08-24
+
+### 新增
+
+- **灵动岛 UI 修复（跨平台）**：注入脚本改为等待 `DOMContentLoaded` 后再创建
+  壳层 UI，修复 document start 注入时 `document.documentElement` 尚不存在导致
+  灵动岛 / 右键菜单 / 启动 splash 不出现的问题（macOS WKWebView 与 Windows
+  WebView2 均有此时序问题）。
+- **设置面板远程字段即时切换**：灵动岛设置面板的「本地 / 远程」单选按钮新增
+  change 事件监听，切换后远程 URL / 账号 / 密码输入框立即显示/隐藏，模式标签
+  同步更新（修复此前切换无反应、远程输入框不出现的问题）。
+- **本地不可用自动跳设置页**：启动时本地 dsh（3080）起不来，自动切到设置页，
+  方便直接填写远程地址连接。
+- **Windows 启动不再弹终端窗口**：dsh 子进程改用 `CREATE_NO_WINDOW` 标志启动，
+  隐藏 cmd 控制台窗口。
+- **Windows dsh 命令启动修复**：不再手动拼接 `cd /d && cmd /C` shell 字符串
+  （Rust args 自动加引号与 cmd 解析冲突，导致 3080 起不来），改为直接以
+  `dsh.cmd` 作为程序 + `current_dir` 启动，正确走 PATHEXT 解析。
+- **品牌改名**：窗口标题 / 启动页 / 灵动岛 / 顶栏品牌从「dsh desktop」改为
+  「DeepSeek Harness desktop」，右上角 desktop 角标样式优化。
+
+### 变更
+
+- `package.json` 增加 `pnpm.onlyBuiltDependencies`（esbuild），保证 pnpm 10
+  本地构建时 esbuild 二进制正常安装。
+
 ## [0.4.0] - 2026-08-24
 
 ### 新增

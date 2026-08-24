@@ -11,11 +11,15 @@
 /// 注入脚本（对主窗口每次顶层导航生效）
 pub const SHELL_SCRIPT: &str = r#"
 (function () {
-  if (window.__dsh_shell_injected__) return
-  window.__dsh_shell_injected__ = true
-
   var invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke
   if (!invoke) return
+  if (window.__dsh_shell_injected__) return
+  // document start 注入时 documentElement 尚未创建（html 元素不存在），
+  // appendChild 会抛 TypeError；必须等 DOMContentLoaded 后再创建 UI，
+  // 否则幂等标志残留且元素未建，on_page_load 重试也被挡。
+  function boot() {
+    if (window.__dsh_shell_injected__) return
+    window.__dsh_shell_injected__ = true
 
   // 启动页（index.html，tauri:// 或 http://localhost:1420）已自带 UI，
   // 壳层只注入 dsh 页面（3080 本地或远程 URL）
@@ -114,7 +118,7 @@ pub const SHELL_SCRIPT: &str = r#"
   if (isDshPage) {
   var splash = document.createElement('div')
   splash.id = 'dsh-splash'
-  splash.innerHTML = '<div class="wordmark"><svg viewBox="0 0 143 23" width="143" height="23" xmlns="http://www.w3.org/2000/svg"><path d="' + ICON + '"/></svg><b>dsh</b><i>desktop</i><div class="band"></div></div><div class="hint">正在启动服务…</div>'
+  splash.innerHTML = '<div class="wordmark"><svg viewBox="0 0 143 23" width="143" height="23" xmlns="http://www.w3.org/2000/svg"><path d="' + ICON + '"/></svg><b>DeepSeek Harness</b><i>desktop</i><div class="band"></div></div><div class="hint">正在启动服务…</div>'
   document.documentElement.appendChild(splash)
   setTimeout(function () {
     splash.classList.add('fade')
@@ -127,7 +131,7 @@ pub const SHELL_SCRIPT: &str = r#"
   var island = document.createElement('div')
   island.id = 'dsh-island'
   island.innerHTML =
-    '<span class="brand"><svg viewBox="0 0 143 23" xmlns="http://www.w3.org/2000/svg"><path d="' + ICON + '"/></svg><b>dsh</b></span>' +
+    '<span class="brand"><svg viewBox="0 0 143 23" xmlns="http://www.w3.org/2000/svg"><path d="' + ICON + '"/></svg><b>DeepSeek Harness</b></span>' +
     '<span class="mode-tag" id="dsh-island-mode">本地</span>' +
     '<span class="sep"></span>' +
     '<button id="dsh-btn-settings" title="设置">设置</button>' +
@@ -174,6 +178,13 @@ pub const SHELL_SCRIPT: &str = r#"
     var radios = document.querySelectorAll('input[name="dsh-conn-mode"]')
     for (var i = 0; i < radios.length; i++) radios[i].checked = (radios[i].value === mode)
     remoteFields.style.display = mode === 'remote' ? '' : 'none'
+  }
+  // 用户手动切换连接模式：实时更新模式标签与远程字段显示
+  var connRadios = document.querySelectorAll('input[name="dsh-conn-mode"]')
+  for (var i = 0; i < connRadios.length; i++) {
+    connRadios[i].addEventListener('change', function () {
+      setModeUI(this.value)
+    })
   }
   window.__dsh_apply_cfg = function (cfg) {
     if (!cfg) return
@@ -308,5 +319,11 @@ pub const SHELL_SCRIPT: &str = r#"
     }
   }, true)
   } // end if (isDshPage) 右键
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot)
+  } else {
+    boot()
+  }
 })()
 "#;

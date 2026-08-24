@@ -322,7 +322,11 @@ async function init() {
   await listen("dsh-ready", () => {
     refreshStatus();
   });
-  await listen("dsh-crashed", () => refreshStatus());
+  await listen("dsh-crashed", () => {
+    // 本地 dsh 起不来（3080 不可用）时自动切到设置页，方便直接配置/连接远程
+    refreshStatus();
+    el("tab-settings").click();
+  });
   await listen("show-settings", () => {
     el("tab-settings").click();
   });
