@@ -5,6 +5,20 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.6.1] - 2026-08-27
+
+### 修复
+
+- **App 图标改为官方 DeepSeek 样式**：此前图标为蓝底白鲸，与官方 App 图标
+  （白底蓝鲸 #5673FF）配色相反，且历史图标从未更新过。现按官方品牌重新生成
+  整套图标（png/icns/ico/ios/android），与 dsh Web UI favicon 保持一致。
+
+### 清理
+
+- **移除重复的配置示例**：删除 `src-tauri/config.example.json`，统一保留根目录
+  `config.example.json`（README 引用处），并补齐 `connection` 配置段、去掉示例
+  中泄漏的本地开发机路径。
+
 ## [0.6.0] - 2026-08-24
 
 ### 新增
