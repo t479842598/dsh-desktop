@@ -43,12 +43,22 @@ function toast(msg: string) {
   setTimeout(() => t.classList.remove("show"), 4000);
 }
 
+/** 启动画面最短展示时间：即使 dsh 已就绪也至少停留 1.8s，避免一闪而过 */
+const SPLASH_SHOWN_AT = Date.now();
+const MIN_SPLASH_MS = 1800;
+
 /** 淡出启动画面（desktop-polish F-03） */
 function hideSplash() {
   const s = el<HTMLDivElement>("splash");
   if (!s || s.classList.contains("hidden")) return;
-  s.classList.add("hidden");
-  setTimeout(() => s.remove(), 500);
+  const wait = Math.max(0, MIN_SPLASH_MS - (Date.now() - SPLASH_SHOWN_AT));
+  const doHide = () => {
+    if (!s.isConnected) return;
+    s.classList.add("hidden");
+    setTimeout(() => s.remove(), 500);
+  };
+  if (wait > 0) setTimeout(doHide, wait);
+  else doHide();
 }
 
 let currentStatus: DshStatus | null = null;

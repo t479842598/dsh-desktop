@@ -1,7 +1,7 @@
 {
   "name": "dsh-desktop",
   "private": true,
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "dsh desktop shell: Tauri 2 壳 + dsh Web UI + 自动更新管线 + 远程访问",
   "type": "module",
   "scripts": {

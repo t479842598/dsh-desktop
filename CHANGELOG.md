@@ -5,6 +5,17 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.6.2] - 2026-08-27
+
+### 变更
+
+- **启动加载画面重设计**：品牌文字改为「DeepSeek desktop」——官方鲸鱼图标
+  （#5673FF）+ 白色「DeepSeek」+ 灰色「desktop」排版，替换原先变形的
+  wordmark 与旧品牌名；灵动岛工具条品牌同步为鲸鱼图标 +「DeepSeek」。
+- **加载时长**：dsh 页 splash 停留 1.4s → 2.2s；启动页 splash 最短展示 1.8s
+  （dsh 已就绪时也不再一闪而过），「正在启动服务」增加动态省略号。
+- **标题统一**：窗口标题 / 启动页标题改为 DeepSeek desktop。
+
 ## [0.6.1] - 2026-08-27
 
 ### 修复
