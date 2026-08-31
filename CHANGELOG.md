@@ -5,6 +5,28 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.6.3] - 2026-09-01
+
+### 变更
+
+- **依赖升级**：vite 6 → 8.2、typescript 5 → 7.0、window-vibrancy 0.6 → 0.8、
+  tauri-plugin-opener 2.5.4 → 2.5.5（objc2 / objc2-foundation 锁定到最新）。
+
+### 修复
+
+- **健康检测兼容 dsh 认证 401**：dsh 0.1.2-alpha 起无 token 访问返回 401，此前被
+  误判为「非健康占用」而杀掉 launchd 常驻服务，造成 EADDRINUSE 反复崩溃；现
+  将带 dsh 特征的 401 视为健康（认证服务在跑、只是需 launch token）。
+- **适配 dsh launch token 认证**：从 dsh 启动日志（`~/.dsh-desktop/logs/dsh.log`
+  或 `~/.dsh/harness.out.log`）解析最近一次打印的 `dsh web: ...?token=` URL 用于
+  本地导航，兼容新版认证与旧版裸 URL。
+
+### 备注
+
+- 本版客户端改动对 dsh **0.1.1-rc.2 与 0.1.2-alpha.2 双兼容**。若使用 alpha.2，
+  需注意其官方认证层与自定义 ds-auths-plugin 认证栈可能存在叠加冲突；如遇白屏
+  建议保持在 rc.2（详见文档）。
+
 ## [0.6.2] - 2026-08-27
 
 ### 变更
