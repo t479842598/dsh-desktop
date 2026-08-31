@@ -115,3 +115,19 @@
 - 结论：rc.2 下 dsh 首页、认证栈（ds-auths-plugin）、gateway 均正常，客户端白屏问题已解决。
 - 改动文件：src-tauri/src/dsh.rs（two commits 已提交）；~/.dsh/profiles/web/package.json、pnpm-lock.yaml（恢复 rc.2 基线，alpha.2 备份在 package.json.alpha2.bak.20260831-235102）。
 - 回滚点：alpha.2 全局包可 `npm i -g @deepseek-ai/dsh@alpha` 恢复；插件可回滚到 alpha2 备份；客户端 commits 可 revert。
+
+## 2026-09-01 - Task: 发布 v0.6.3 正式版（版本号同步 + tag + CI 发布）
+
+### What was done
+- 确认版本号同步：package.json / Cargo.toml / Cargo.lock / tauri.conf.json 全部 0.6.3（CHANGELOG 0.6.2 区段为历史记录保留）。
+- 验证：pnpm build ✓、cargo test 13/13 ✓。
+- 打 tag v0.6.3（annotated，指向 285be66）并推送，CI（tag v* 触发）已在跑：run #33415296474（macOS arm64 + Windows x64，产物挂 Release）。
+
+### Testing
+- 版本号核对一致。
+- pnpm build / cargo test 通过。
+- CI 触发确认：https://github.com/t479842598/dsh-desktop/actions/runs/33415296474
+
+### Notes
+- 改动文件：版本号已随之前 commit 入库；本次仅 git tag 推送（无代码改动）。
+- 回滚：删除 tag `git push origin :refs/tags/v0.6.3`。
