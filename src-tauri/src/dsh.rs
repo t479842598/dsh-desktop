@@ -382,7 +382,7 @@ fn healthy_dsh_once(port: u16) -> bool {
             Ok(n) => {
                 buf.extend_from_slice(&chunk[..n]);
                 let text = String::from_utf8_lossy(&buf);
-                if text.contains(" 200 ") && text.to_lowercase().contains("dsh") {
+                if is_dsh_healthy_response(&text) {
                     return true;
                 }
                 if buf.len() > 8192 {
@@ -391,8 +391,28 @@ fn healthy_dsh_once(port: u16) -> bool {
             }
         }
     }
-    let text = String::from_utf8_lossy(&buf);
-    text.starts_with("HTTP/1.") && text.contains(" 200 ") && text.to_lowercase().contains("dsh")
+    is_dsh_healthy_response(&String::from_utf8_lossy(&buf))
+}
+
+/// dsh 服务是否健康：HTTP 200 带 dsh 特征（旧版无认证），或 401 带
+/// `dsh web authentication required`（dsh 0.1.2-alpha 起：认证服务在跑、
+/// 只是需要 launch token，页面可经 token URL 访问）。两者都算健康——
+/// 否则 401 会被误判为「非健康占用」，进而杀掉 launchd 常驻服务/自己
+/// 拉起的进程，造成 EADDRINUSE 反复崩溃。
+fn is_dsh_healthy_response(text: &str) -> bool {
+    if !text.starts_with("HTTP/1.") {
+        return false;
+    }
+    let lower = text.to_lowercase();
+    if lower.contains("dsh") {
+        if text.contains(" 200 ") {
+            return true;
+        }
+        if text.contains(" 401 ") && lower.contains("authentication required") {
+            return true;
+        }
+    }
+    false
 }
 
 /// 全局 dsh 进程句柄（Arc 便于跨线程克隆）
@@ -542,6 +562,22 @@ mod tests {
         assert_eq!(url, "http://127.0.0.1:3080/?token=abc123");
     }
 
+
+    #[test]
+    fn healthy_dsh_accepts_auth_required_401() {
+        // dsh 0.1.2-alpha 起：无 token 访问返回 401 + dsh 特征，应视为健康
+        assert!(is_dsh_healthy_response(
+            "HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\ndsh web authentication required; reopen the URL printed by dsh web.\n"
+        ));
+        // 200 + dsh 特征（旧版）仍健康
+        assert!(is_dsh_healthy_response(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html data-dsh-skin=\"x\">dsh ui</html>"
+        ));
+        // 非 dsh 服务的 401 不健康
+        assert!(!is_dsh_healthy_response("HTTP/1.1 401 Unauthorized\r\n\r\nother service"));
+        // 非 dsh 200 不健康
+        assert!(!is_dsh_healthy_response("HTTP/1.1 200 OK\r\n\r\n<html><body>some other service</body></html>"));
+    }
     #[test]
     fn launch_token_url_returns_none_when_no_match() {
         let tmp = std::env::temp_dir().join("dsh-launch-token-test-nomatch");
