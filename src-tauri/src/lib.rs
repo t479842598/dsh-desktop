@@ -15,7 +15,7 @@ use tauri::{AppHandle, Emitter, Listener, Manager, State, WebviewWindow};
 use tauri::Position;
 use tauri::LogicalPosition;
 
-use dsh::DshHandle;
+use dsh::{DshHandle, launch_token_url};
 use watcher::{WatcherShared, WatcherStatus};
 
 /// 应用共享状态
@@ -203,12 +203,19 @@ fn navigate_main(app: &AppHandle, url: &str) {
 /// 把主窗口导航到 dsh Web UI（本地 3080 或远程 URL）。
 /// 供设置面板「保存并应用」等**用户显式选择**后导航使用；
 /// 启动流程不经过这里（见 boot：本地优先，失败弹窗由前端处理）。
+/// 本地模式导航 URL：优先取 dsh 最近一次启动打印的「带 launch token」URL
+/// （dsh 0.1.2-alpha 起的认证要求），取不到时回退裸 http://127.0.0.1:<port>
+/// （兼容旧版无认证 dsh）。远程模式调用方不在本路径。
+fn local_web_url(cfg: &config::AppConfig) -> String {
+    launch_token_url(&cfg.dsh).unwrap_or_else(|| format!("http://127.0.0.1:{}", cfg.dsh.port))
+}
+
 fn open_dsh_window(app: &AppHandle) {
     let (cfg, _) = config::load_config();
     let url = if cfg.connection.mode == "remote" {
         remote_url_with_auth(&cfg)
     } else {
-        format!("http://127.0.0.1:{}", cfg.dsh.port)
+        local_web_url(&cfg)
     };
     navigate_main(app, &url);
 }
@@ -244,7 +251,7 @@ fn create_dsh_window(app: &AppHandle, label: &str) -> Result<tauri::WebviewWindo
         let url = if cfg.connection.mode == "remote" {
             remote_url_with_auth(&cfg)
         } else {
-            format!("http://127.0.0.1:{}", cfg.dsh.port)
+            local_web_url(&cfg)
         };
         let parsed: tauri::Url = url.parse().map_err(|e| format!("URL 无效: {url}: {e}"))?;
         WebviewUrl::External(parsed)
@@ -316,7 +323,7 @@ fn open_dsh_ui(app: AppHandle) -> Result<String, String> {
             cfg.dsh.port
         ));
     }
-    navigate_main(&app, &format!("http://127.0.0.1:{}", cfg.dsh.port));
+    navigate_main(&app, &local_web_url(&cfg));
     Ok("已打开 dsh Web UI".into())
 }
 
@@ -616,7 +623,7 @@ fn boot(app: &AppHandle, state: &AppState) {
                     }
                     let _ = app.emit("dsh-ready", ());
                     // 双击启动后自动打开本地 dsh Web UI 窗口
-                    navigate_main(&app, &format!("http://127.0.0.1:{}", cfg.dsh.port));
+                    navigate_main(&app, &local_web_url(&cfg));
                 }
                 Err(e) => {
                     dsh.last_error = Some(e.clone());

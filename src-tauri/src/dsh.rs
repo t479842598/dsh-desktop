@@ -207,6 +207,49 @@ impl DshProcess {
     }
 }
 
+/// 从 dsh 启动日志中解析最近一次打印的「带 launch token 的 Web UI URL」。
+///
+/// dsh web（0.1.2-alpha 起）启动时会在 stdout 打印一行
+/// `dsh web: http://127.0.0.1:<port>/?token=...`，该 token 是进程级随机生成
+/// 的认证凭据，客户端必须携带才能通过 dsh 的 browser-auth 栅栏（否则 401）。
+/// 旧版（无认证）打印的裸 URL 同样会被解析并返回，兼容两种版本。
+///
+/// 覆盖两种启动来源：
+/// - 本壳自己拉起的 dsh：stdout 重定向到 ~/.dsh-desktop/logs/dsh.log；
+/// - launchd 常驻服务（健康复用时复用）：stdout 写到 ~/.dsh/harness.out.log。
+///
+/// 取「最近一次」匹配行：token 随进程重启失效，只有最后一次启动的输出
+/// 才与当前监听进程对应。找不到匹配行返回 None（调用方回退裸 URL）。
+pub fn launch_token_url(cfg: &DshConfig) -> Option<String> {
+    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    let candidates = [
+        config_dir().join("logs").join("dsh.log"),
+        home.join(".dsh").join("harness.out.log"),
+    ];
+    let needle = format!("dsh web: http://127.0.0.1:{}", cfg.port);
+    let mut last: Option<String> = None;
+    for path in candidates {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for line in text.lines().rev() {
+            if line.starts_with(&needle) {
+                last = Some(line.trim().to_string());
+                break;
+            }
+        }
+    }
+    last.and_then(|line| {
+        let after = line.trim_start_matches("dsh web: ").trim();
+        let url = after.split_whitespace().next().unwrap_or("");
+        if url.is_empty() {
+            None
+        } else {
+            Some(url.to_string())
+        }
+    })
+}
+
 /// 单引号转义 shell 参数（用于 /bin/sh -c 拼接）
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\\\''"))
@@ -471,5 +514,44 @@ mod tests {
         assert!(r.is_ok(), "子进程退出后应复用接管端口的外部服务: {:?}", r);
         assert!(dsh.ready);
         assert!(dsh.child.is_none());
+    }
+    #[test]
+    fn launch_token_url_parses_latest_url_with_token() {
+        // 用临时 HOME + DSH_DESKTOP_CONFIG_DIR 隔离，避免写真实用户目录
+        let tmp = std::env::temp_dir().join("dsh-launch-token-test-parity");
+        std::env::set_var("HOME", &tmp);
+        std::env::set_var("DSH_DESKTOP_CONFIG_DIR", tmp.join("cfg"));
+
+        let cfg = DshConfig::default();
+        let home = dirs::home_dir().unwrap();
+        let log_dir = config_dir().join("logs");
+        std::fs::create_dir_all(&log_dir).unwrap();
+        let dsh_log = log_dir.join("dsh.log");
+        let harness_log = home.join(".dsh").join("harness.out.log");
+        std::fs::create_dir_all(home.join(".dsh")).unwrap();
+
+        // harness.out.log（launchd 常驻）最后一行带 token，dsh.log（壳自拉）无 token
+        std::fs::write(
+            &harness_log,
+            "dsh web: http://127.0.0.1:3080\n\ndsh web: http://127.0.0.1:3080/?token=abc123\n",
+        )
+        .unwrap();
+        std::fs::write(&dsh_log, "dsh web: http://127.0.0.1:3080\n").unwrap();
+
+        let url = launch_token_url(&cfg).unwrap();
+        assert_eq!(url, "http://127.0.0.1:3080/?token=abc123");
+    }
+
+    #[test]
+    fn launch_token_url_returns_none_when_no_match() {
+        let tmp = std::env::temp_dir().join("dsh-launch-token-test-nomatch");
+        std::env::set_var("HOME", &tmp);
+        std::env::set_var("DSH_DESKTOP_CONFIG_DIR", tmp.join("cfg"));
+
+        let mut cfg = DshConfig::default();
+        cfg.port = 3999;
+        std::fs::create_dir_all(config_dir().join("logs")).unwrap();
+        std::fs::create_dir_all(dirs::home_dir().unwrap().join(".dsh")).unwrap();
+        assert_eq!(launch_token_url(&cfg), None);
     }
 }
